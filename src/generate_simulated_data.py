@@ -1,76 +1,125 @@
-import numpy as np
+import argparse
+import json
+import random
 from pathlib import Path
 
-HZ = 72                                   # amostras por segundo
-LARG_GRAUS, ALT_GRAUS = 16.0, 22.4        # painel 0,42 x 0,594 m a 1,5 m
-RUIDO_GRAUS = 0.5                         # ruído do rastreador (desvio-padrão)
+HZ = 90
+NOISE = 0.017    # per-sample jitter, normalized panel units (about 0.3 deg)
+OFFSET = 0.045   # per-recording systematic shift (about 1 deg)
+BLINKS_PER_SEC = 0.25
 
-# Centro de cada AOI (x, y de 0 a 1, origem embaixo à esquerda)
-AOIS = {
-    "enunciado": (0.50, 0.875),
-    "equacao":   (0.50, 0.60),
-    "alt_A":     (0.275, 0.34),
-    "alt_B":     (0.725, 0.34),
-    "alt_C":     (0.275, 0.14),
-    "alt_D":     (0.725, 0.14),
+OPTIONS = ["option_A", "option_B", "option_C", "option_D"]
+DEFAULT_AOIS = {
+    "statement": (0.05, 0.75, 0.95, 0.95),
+    "equation": (0.20, 0.55, 0.80, 0.72),
+    "option_A": (0.05, 0.38, 0.95, 0.50),
+    "option_B": (0.05, 0.26, 0.95, 0.37),
+    "option_C": (0.05, 0.14, 0.95, 0.25),
+    "option_D": (0.05, 0.03, 0.95, 0.13),
 }
 
-def simular_sessao(sequencia, rng, taxa_piscada=0.25):
-    """Gera um DataFrame-like (lista de linhas) a partir de uma sequência de AOIs."""
-    alvos = []
-    for aoi in sequencia:
-        cx, cy = AOIS[aoi]
-        for _ in range(rng.integers(1, 4)):               # 1 a 3 fixações por visita
-            x = cx + rng.normal(0, 0.03)
-            y = cy + rng.normal(0, 0.02)
-            alvos.append((x, y, rng.uniform(0.2, 0.5)))   # duração 200 a 500 ms
 
-    xs, ys = [], []
-    for i, (x, y, dur) in enumerate(alvos):
-        n = max(int(dur * HZ), 3)
-        xs += list(x + rng.normal(0, RUIDO_GRAUS / LARG_GRAUS, n))
-        ys += list(y + rng.normal(0, RUIDO_GRAUS / ALT_GRAUS, n))
-        if i < len(alvos) - 1:                            # sacada até a próxima fixação
-            nx, ny, _ = alvos[i + 1]
-            m = max(int(rng.uniform(0.03, 0.06) * HZ), 2)
-            xs += list(np.linspace(x, nx, m + 2)[1:-1])
-            ys += list(np.linspace(y, ny, m + 2)[1:-1])
+def load_aois(path):
+    p = Path(path)
+    if not p.exists():
+        return DEFAULT_AOIS
+    aois = {}
+    for name, v in json.loads(p.read_text()).items():
+        if name == "outside":
+            continue
+        aois[name] = v if isinstance(v, list) else (v["x_min"], v["y_min"], v["x_max"], v["y_max"])
+    return aois
 
-    xs, ys = np.array(xs), np.array(ys)
-    n = len(xs)
-    tempo = np.cumsum(rng.normal(1 / HZ, 0.0008, n))
-    conf = np.clip(rng.normal(0.96, 0.03, n), 0, 1)
 
-    # Piscadas: perda de sinal de 100 a 300 ms
-    duracao = tempo[-1]
-    for t_ini in rng.uniform(0, duracao, rng.poisson(taxa_piscada * duracao)):
-        mask = (tempo >= t_ini) & (tempo <= t_ini + rng.uniform(0.1, 0.3))
-        xs[mask], ys[mask] = np.nan, np.nan
-        conf[mask] = rng.uniform(0, 0.2, mask.sum())
+def point_in(box):
+    x0, y0, x1, y1 = box
+    return random.uniform(x0, x1), random.uniform(y0, y1)
 
-    fora = (xs < 0) | (xs > 1) | (ys < 0) | (ys > 1)      # olhar fora do painel
-    xs[fora], ys[fora] = np.nan, np.nan
-    acertou = (~np.isnan(xs)).astype(int)
-    return tempo, xs, ys, conf, acertou
 
-def salvar_csv(caminho, dados):
-    tempo, xs, ys, conf, ac = dados
-    with open(caminho, "w") as f:
-        f.write("tempo,x,y,confianca,acertou\n# inicio\n")
-        for t, x, y, c, a in zip(tempo, xs, ys, conf, ac):
-            xs_ = "" if np.isnan(x) else f"{x:.4f}"
-            ys_ = "" if np.isnan(y) else f"{y:.4f}"
-            f.write(f"{t:.4f},{xs_},{ys_},{c:.2f},{a}\n")
+def scanpath(answer):
+    path = [("statement", random.lognormvariate(-0.1, 0.3)),
+            ("equation", random.lognormvariate(-0.5, 0.3))]
+    path += [(o, random.lognormvariate(-1.4, 0.4)) for o in OPTIONS]
+    for _ in range(random.randint(1, 4)):
+        path.append((random.choice(["statement", "equation"] + OPTIONS),
+                     random.lognormvariate(-1.5, 0.4)))
+    path.append((answer, random.lognormvariate(-1.0, 0.3)))
+    return path
+
+
+def sample(t, x, y):
+    x += random.gauss(0, NOISE)
+    y += random.gauss(0, NOISE)
+    if random.random() < BLINKS_PER_SEC / HZ:
+        return t, None, None, 0.0, 0
+    conf = random.uniform(0.85, 1.0)
+    if random.random() < 0.03:
+        conf = random.uniform(0.1, 0.45)
+    if random.random() < 0.01 or not (0 <= x <= 1 and 0 <= y <= 1):
+        return t, None, None, conf, 0
+    return t, x, y, conf, 1
+
+
+def simulate(aois, answer):
+    dt = 1 / HZ
+    rows, t = [], 0.0
+    ox, oy = random.gauss(0, OFFSET), random.gauss(0, OFFSET)
+    prev = point_in(aois["statement"])
+    for name, dur in scanpath(answer):
+        target = point_in(aois[name])
+        n = max(2, int(random.uniform(0.03, 0.06) / dt))  # saccade
+        for i in range(1, n + 1):
+            f = i / n
+            rows.append(sample(t, prev[0] + (target[0] - prev[0]) * f + ox,
+                                  prev[1] + (target[1] - prev[1]) * f + oy))
+            t += dt
+        dx, dy = random.gauss(0, 0.0004), random.gauss(0, 0.0004)
+        for i in range(max(3, int(dur / dt))):  # fixation with a bit of drift
+            rows.append(sample(t, target[0] + dx * i + ox, target[1] + dy * i + oy))
+            t += dt
+        prev = target
+    return rows, t
+
+
+def write_csv(path, rows):
+    out = ["time_s,x,y,confidence,on_panel", "# start"]
+    for t, x, y, c, on in rows:
+        xy = f"{x:.4f},{y:.4f}" if x is not None else ","
+        out.append(f"{t:.4f},{xy},{c:.2f},{on}")
+    path.write_text("\n".join(out) + "\n")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--participants", type=int, default=5)
+    ap.add_argument("--exercises", type=int, default=2)
+    ap.add_argument("--out", default="data/example")
+    ap.add_argument("--aois", default="data/aois.json")
+    ap.add_argument("--seed", type=int, default=42)
+    args = ap.parse_args()
+
+    random.seed(args.seed)
+    aois = load_aois(args.aois)
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    meta = ["participant_id,exercise_id,answer,correct_answer,is_correct,"
+            "total_time_s,wears_glasses,notes"]
+    for p in range(1, args.participants + 1):
+        pid = f"P{p:02d}"
+        glasses = int(random.random() < 0.3)
+        for e in range(1, args.exercises + 1):
+            eid = f"ex{e:02d}"
+            correct = random.choice(OPTIONS)
+            answer = correct if random.random() < 0.65 else random.choice(OPTIONS)
+            rows, total = simulate(aois, answer)
+            write_csv(out / f"gaze_{pid}_{eid}_sim.csv", rows)
+            meta.append(f"{pid},{eid},{answer},{correct},{int(answer == correct)},"
+                        f"{total:.2f},{glasses},simulated")
+
+    (out / "metadata.csv").write_text("\n".join(meta) + "\n")
+    print(f"wrote {args.participants * args.exercises} recordings to {out}")
+
 
 if __name__ == "__main__":
-    rng = np.random.default_rng(42)
-    pasta = Path("data/exemplo"); pasta.mkdir(parents=True, exist_ok=True)
-
-    # Dois "perfis" fictícios para ter o que comparar depois
-    perfis = {
-        "P01": ["enunciado", "equacao", "alt_A", "equacao", "alt_B", "alt_B"],        # sistemático
-        "P02": ["enunciado", "alt_A", "alt_B", "alt_C", "alt_D", "equacao", "alt_B"], # tentativa
-    }
-    for pid, seq in perfis.items():
-        salvar_csv(pasta / f"gaze_{pid}_ex01_sim.csv", simular_sessao(seq, rng))
-        print("gerado:", pid)
+    main()
