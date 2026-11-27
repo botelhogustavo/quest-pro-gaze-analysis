@@ -66,3 +66,5 @@ resultados/
 # ---------- Sistema ----------
 .DS_Store
 Thumbs.db
+*.slnx
+*_BurstDebugInformation_DoNotShip/
