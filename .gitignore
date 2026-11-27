@@ -56,8 +56,10 @@ env/
 
 # ---------- Dados de participantes (não versionar) ----------
 real_data/
-data/
+data/real/
 gaze_P*.csv
+data/raw/
+src/data/
 
 # Saídas geradas
 resultados/
@@ -69,15 +71,11 @@ Thumbs.db
 *.slnx
 *_BurstDebugInformation_DoNotShip/
 
-# Unity: keep only what explains data collection
+# Unity: keep only my own scripts and stimulus images
 unity/CBG_folha_estatica/*
 !unity/CBG_folha_estatica/Assets/
 unity/CBG_folha_estatica/Assets/*
 !unity/CBG_folha_estatica/Assets/Scripts/
 !unity/CBG_folha_estatica/Assets/ex0*
-!unity/CBG_folha_estatica/Packages/
-unity/CBG_folha_estatica/Packages/*
-!unity/CBG_folha_estatica/Packages/manifest.json
-!unity/CBG_folha_estatica/ProjectSettings/
-unity/CBG_folha_estatica/ProjectSettings/*
-!unity/CBG_folha_estatica/ProjectSettings/ProjectVersion.txt
+*.mat
+*.mat.meta
