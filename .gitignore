@@ -31,6 +31,14 @@
 ExportedObj/
 .consulo/
 
+# Unity build/recovery leftovers
+.utmp/
+_Recovery/
+_Recovery.meta
+
+# Raw gaze file at repo root
+/gaze.csv
+
 # Builds
 *.apk
 *.aab
