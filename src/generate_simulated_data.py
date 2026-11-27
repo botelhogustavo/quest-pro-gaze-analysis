@@ -3,7 +3,7 @@ import json
 import random
 from pathlib import Path
 
-HZ = 90
+HZ = 100         # the headset logs about 100 samples/s
 NOISE = 0.017    # per-sample jitter, normalized panel units (about 0.3 deg)
 OFFSET = 0.045   # per-recording systematic shift (about 1 deg)
 BLINKS_PER_SEC = 0.25
@@ -81,12 +81,16 @@ def simulate(aois, answer):
     return rows, t
 
 
-def write_csv(path, rows):
-    out = ["time_s,x,y,confidence,on_panel", "# start"]
+def write_csv(path, rows, exercise):
+    """Write rows in the GazeLogger format: exercise column plus '#' marker lines."""
+    end = rows[-1][0] if rows else 0.0
+    out = ["time_s,x,y,confidence,on_panel,exercise", "# start",
+           f"# exercise,{rows[0][0] if rows else 0.0:.4f},{exercise}"]
     for t, x, y, c, on in rows:
         xy = f"{x:.4f},{y:.4f}" if x is not None else ","
-        out.append(f"{t:.4f},{xy},{c:.2f},{on}")
-    path.write_text("\n".join(out) + "\n")
+        out.append(f"{t:.4f},{xy},{c:.2f},{on},{exercise}")
+    out.append(f"# end,{end:.4f}")
+    path.write_text("\n".join(out) + "\n", encoding="utf-8")
 
 
 def main():
@@ -113,7 +117,7 @@ def main():
             correct = random.choice(OPTIONS)
             answer = correct if random.random() < 0.65 else random.choice(OPTIONS)
             rows, total = simulate(aois, answer)
-            write_csv(out / f"gaze_{pid}_{eid}_sim.csv", rows)
+            write_csv(out / f"gaze_{pid}_{eid}_sim.csv", rows, eid)
             meta.append(f"{pid},{eid},{answer},{correct},{int(answer == correct)},"
                         f"{total:.2f},{glasses},simulated")
 
